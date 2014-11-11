@@ -29,7 +29,7 @@ if (config.statsd) {
     assert.object(config.statsd, "statsd");
     assert.string(config.statsd.host, "statsd.host");
     assert.number(config.statsd.port, "statsd.port");
-    
+
     statsd = new StatsD({
         host: config.statsd.host,
         port: config.statsd.port,
@@ -55,7 +55,7 @@ var redis = Redis.createClient(config.redis.port, config.redis.host);
 
 redis.on("error", function(err) {
     logger.fatal(err, "got a redis error");
-    
+
     // throw it, 'cause this is fatal, yo.
     throw err;
 });
@@ -79,11 +79,11 @@ function handleHealthStatuses(stateName, statuses) {
         ServiceID: 'client-maffei',
         ServiceName: 'client-maffei' } ]
     */
-    
+
     logger.debug({ stateName: stateName }, "got %d status records", statuses.length);
-    
+
     statsd.increment("health." + stateName, statuses.length);
-    
+
     // consul => flapjack
     var STATE_MAP = {
         "passing":  "ok",
@@ -91,42 +91,42 @@ function handleHealthStatuses(stateName, statuses) {
         "critical": "critical",
         "unknown":  "unknown",
     };
-    
+
     var DEFAULT_SUMMARY_MAP = {
         "passing":  "(•‿•)",
         "warning":  "ಠ_ಠ",
         "critical": "(╯°□°）╯︵ ┻━┻",
         "unknown":  "¯\\_(ツ)_/¯",
     };
-    
+
     if (Array.isArray(statuses) && statuses.length) {
         var multi = redis.multi();
-        
+
         statuses.forEach(function(status) {
             if (status.Status !== "passing") {
                 logger.info(status);
             }
-            
+
             var evt = {
                 "entity":  status.Node,
                 "check":   status.CheckID,
                 "type":    "service",
                 "state":   STATE_MAP[status.Status],
-                "summary":  DEFAULT_SUMMARY_MAP[status.Status], // must exist, be non-empty
+                "summary":  status.Status, // must exist, be non-empty
                 "details": status.Output,
                 "time":    Math.floor((new Date()).getTime() / 1000),
             };
-            
+
             if (status.Output && status.Output.length) {
                 evt.summary = status.Output.split("\n")[0];
             }
-            
+
             // keep in sync with flapjack-nagios-receiver
             statsd.increment("events");
-            
+
             multi.lpush("events", JSON.stringify(evt));
         });
-        
+
         multi.exec(function(err /*, replies */) {
             if (err) {
                 logger.error(err, "unable to push events to redis");
@@ -140,24 +140,24 @@ Q
     .ninvoke(redis, "once", "connect")
     .then(function() {
         logger.info("connected to redis");
-        
+
         return Q.ninvoke(redis, "select", config.redis.db);
     })
     .then(function() {
         logger.debug("selected db %d", config.redis.db);
-        
+
         consul.watch("/v1/health/state/passing").on("response", function(statuses) {
             handleHealthStatuses("passing", statuses);
         });
-        
+
         consul.watch("/v1/health/state/critical").on("response", function(statuses) {
             handleHealthStatuses("critical", statuses);
         });
-        
+
         consul.watch("/v1/health/state/warning").on("response", function(statuses) {
             handleHealthStatuses("warning", statuses);
         });
-        
+
         consul.watch("/v1/health/state/unknown").on("response", function(statuses) {
             handleHealthStatuses("unknown", statuses);
         });
